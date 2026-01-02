@@ -1,16 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
-  <ItemGroup>
-    <Folder Include="Wsdl\Generated\" />
-  </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="System.ServiceModel.Http" Version="8.*" />
-    <PackageReference Include="System.ServiceModel.NetTcp" Version="8.*" />
-    <PackageReference Include="System.ServiceModel.Primitives" Version="8.*" />
-  </ItemGroup>
+    <PropertyGroup>
+        <PackageId>ArcaNet</PackageId>
+        <TargetFramework>net9.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <Version>1.0.1</Version>
+        <Authors>Tomas Weigenast</Authors>
+        <Company>Tomas Weigenast</Company>
+        <Description>Arca SDK for .NET</Description>
+        <RepositoryUrl>https://github.com/tomasweigenast/arca-net-sdk</RepositoryUrl>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+        <IncludeSymbols>true</IncludeSymbols>
+        <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+    </PropertyGroup>
+    <ItemGroup>
+        <Folder Include="Wsdl\Generated\"/>
+        <None Include="README.md" Pack="true" PackagePath="" />
+    </ItemGroup>
+    <ItemGroup>
+        <PackageReference Include="System.ServiceModel.Http" Version="8.*"/>
+        <PackageReference Include="System.ServiceModel.NetTcp" Version="8.*"/>
+        <PackageReference Include="System.ServiceModel.Primitives" Version="8.*"/>
+    </ItemGroup>
 </Project>
