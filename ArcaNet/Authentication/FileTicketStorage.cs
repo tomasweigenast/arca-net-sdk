@@ -1,8 +1,9 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 
 namespace ArcaNet.Authentication;
 
-public class FileTicketStorage(string filePath) : ITicketStorage
+public class FileTicketStorage(string filePath, ILogger? logger = null) : ITicketStorage
 {
     private List<AuthTicket>? _tickets;
 
@@ -35,7 +36,6 @@ public class FileTicketStorage(string filePath) : ITicketStorage
         try
         {
             contents = await File.ReadAllTextAsync(filePath);
-        
         }
         catch (Exception ex)
         {
@@ -49,8 +49,9 @@ public class FileTicketStorage(string filePath) : ITicketStorage
             {
                 _tickets = JsonSerializer.Deserialize<List<AuthTicket>>(contents);
             }
-            catch
+            catch(Exception ex)
             {
+                logger?.LogError(ex, "Failed to deserialize tickets from file. Skipping token load.");
                 _tickets = [];
             }
         }

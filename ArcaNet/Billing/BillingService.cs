@@ -3,6 +3,7 @@ using ArcaNet.Billing.Enums;
 using ArcaNet.Billing.Models;
 using ArcaNet.Services;
 using ArcaNet.Wsfe;
+using Microsoft.Extensions.Logging;
 
 namespace ArcaNet.Billing;
 
@@ -11,64 +12,111 @@ public class BillingService
     private readonly ITicketStorage _ticketStorage;
     private readonly ArcaOptions _options;
     private readonly ArcaEnvironment _environment;
+    private readonly ILogger? _logger;
 
-    internal BillingService(ArcaOptions options, ArcaEnvironment environment)
+    internal BillingService(ArcaOptions options, ArcaEnvironment environment, ILogger? logger = null)
     {
         _options = options;
         _environment = environment;
         _ticketStorage = options.TicketStorage;
+        _logger = logger;
     }
 
     public async Task<InvoiceResult> CreateInvoiceAsync(Invoice invoice, CancellationToken ct = default)
     {
-        var ticket = await _ticketStorage.GetTicketAsync(ct);
-        if (ticket is not { IsValid: true }) throw new UnauthorizedAccessException("There is no valid ticket to authenticate the request.");
+        _logger?.LogDebug("Creating invoice: POS={PointOfSale}, Type={Type}, Customer={DocType}:{DocNumber}", 
+            invoice.PointOfSale, invoice.Type, invoice.Customer.DocumentType, invoice.Customer.DocumentNumber);
+        
+        var ticket = await GetValidTicketAsync(ct);
         
         var lastNumber = await GetLastInvoiceNumberAsync(invoice.PointOfSale, invoice.Type, ct);
         var number = lastNumber + 1;
+        
+        _logger?.LogDebug("Next invoice number: {Number}", number);
 
         var request = MapToRequest(invoice, number);
         var service = CreateInternalService();
+        
+        _logger?.LogInformation("Requesting CAE for invoice {Number} (POS={PointOfSale}, Type={Type}, Total={Total})", 
+            number, invoice.PointOfSale, invoice.Type, invoice.TotalAmount);
+        
         var response = await service.RequestCaeAsync(ticket, request, ct);
+        var result = MapToResult(response, number);
 
-        return MapToResult(response, number);
+        if (result.Approved)
+        {
+            _logger?.LogInformation("Invoice {Number} approved. CAE={Cae}, Expires={CaeExpiration}", 
+                number, result.Cae, result.CaeExpiration);
+        }
+        else
+        {
+            _logger?.LogWarning("Invoice {Number} rejected. Errors: {Errors}", 
+                number, string.Join("; ", result.Errors.Select(e => $"[{e.Code}] {e.Message}")));
+        }
+
+        return result;
     }
 
     public async Task<int> GetLastInvoiceNumberAsync(int pointOfSale, InvoiceType type, CancellationToken ct = default)
     {
-        var ticket = await _ticketStorage.GetTicketAsync(ct);
-        if (ticket is not { IsValid: true }) throw new UnauthorizedAccessException("There is no valid ticket to authenticate the request.");
+        _logger?.LogDebug("Getting last invoice number for POS={PointOfSale}, Type={Type}", pointOfSale, type);
+        
+        var ticket = await GetValidTicketAsync(ct);
         var service = CreateInternalService();
-        return await service.GetLastInvoiceNumberAsync(ticket, pointOfSale, (int)type, ct);
+        var number = await service.GetLastInvoiceNumberAsync(ticket, pointOfSale, (int)type, ct);
+        
+        _logger?.LogDebug("Last invoice number: {Number}", number);
+        return number;
     }
 
     public async Task<InvoiceDetail?> GetInvoiceAsync(int pointOfSale, InvoiceType type, long number, CancellationToken ct = default)
     {
-        var ticket = await _ticketStorage.GetTicketAsync(ct);
-        if (ticket is not { IsValid: true }) throw new UnauthorizedAccessException("There is no valid ticket to authenticate the request.");
-
+        _logger?.LogDebug("Getting invoice: POS={PointOfSale}, Type={Type}, Number={Number}", pointOfSale, type, number);
+        
+        var ticket = await GetValidTicketAsync(ct);
         var service = CreateInternalService();
         var response = await service.GetInvoiceAsync(ticket, pointOfSale, (int)type, number, ct);
 
-        return response is null ? null : MapToInvoiceDetail(response);
+        if (response is null)
+        {
+            _logger?.LogDebug("Invoice not found");
+            return null;
+        }
+
+        _logger?.LogDebug("Invoice found: CAE={Cae}, Total={Total}", response.CodAutorizacion, response.ImpTotal);
+        return MapToInvoiceDetail(response);
     }
 
     public async Task<bool> HealthCheckAsync(CancellationToken ct = default)
     {
+        _logger?.LogDebug("Performing WSFE health check");
+        
         var service = CreateInternalService();
         var response = await service.HealthCheckAsync(ct);
-        return response is { AppServer: "OK", DbServer: "OK", AuthServer: "OK" };
+        var healthy = response is { AppServer: "OK", DbServer: "OK", AuthServer: "OK" };
+
+        if (healthy)
+        {
+            _logger?.LogDebug("WSFE health check passed");
+        }
+        else
+        {
+            _logger?.LogWarning("WSFE health check failed: App={AppServer}, Db={DbServer}, Auth={AuthServer}",
+                response.AppServer, response.DbServer, response.AuthServer);
+        }
+
+        return healthy;
     }
     
     public async Task<List<PointOfSale>> GetPointsOfSaleAsync(CancellationToken ct = default)
     {
-        var ticket = await _ticketStorage.GetTicketAsync(ct);
-        if (ticket is not { IsValid: true }) throw new UnauthorizedAccessException("There is no valid ticket to authenticate the request.");
-
+        _logger?.LogDebug("Getting points of sale");
+        
+        var ticket = await GetValidTicketAsync(ct);
         var service = CreateInternalService();
         var response = await service.GetPointsOfSaleAsync(ticket, ct);
 
-        return response?
+        var result = response?
             .Select(p => new PointOfSale
             {
                 Number = p.Nro,
@@ -77,8 +125,21 @@ public class BillingService
                 DeactivationDate = string.IsNullOrEmpty(p.FchBaja) ? null : DateTime.ParseExact(p.FchBaja, "yyyyMMdd", null)
             })
             .ToList() ?? [];
+
+        _logger?.LogDebug("Found {Count} points of sale", result.Count);
+        return result;
     }
 
+    private async Task<AuthTicket> GetValidTicketAsync(CancellationToken ct)
+    {
+        var ticket = await _ticketStorage.GetTicketAsync(ct);
+        if (ticket is not { IsValid: true })
+        {
+            _logger?.LogError("No valid authentication ticket available");
+            throw new UnauthorizedAccessException("There is no valid ticket to authenticate the request.");
+        }
+        return ticket;
+    }
 
     private InvoiceService CreateInternalService() 
         => new(_options.ConnectionSettings.Cuit, _environment == ArcaEnvironment.Production);
